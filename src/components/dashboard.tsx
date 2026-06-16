@@ -1,11 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -14,6 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { RefreshCw, ServerCrash, Trophy, LayoutDashboard, Search, ListTree } from "lucide-react";
+import { motion } from "framer-motion";
 
 interface Pendaftar {
   no_pendaftaran: string | null;
@@ -33,60 +33,29 @@ interface RefreshResponse {
   error?: string;
 }
 
-// Distinct accent per jalur — gradients, border, badge, ring colors.
-const JALUR_THEME: Record<
-  number,
-  { from: string; to: string; badge: string; dot: string; ring: string }
-> = {
-  1: {
-    from: "from-violet-500",
-    to: "to-fuchsia-500",
-    badge: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-    dot: "bg-violet-500",
-    ring: "ring-violet-500/20",
-  },
-  2: {
-    from: "from-sky-500",
-    to: "to-cyan-400",
-    badge: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-    dot: "bg-sky-500",
-    ring: "ring-sky-500/20",
-  },
-  3: {
-    from: "from-amber-500",
-    to: "to-orange-500",
-    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-    dot: "bg-amber-500",
-    ring: "ring-amber-500/20",
-  },
-  4: {
-    from: "from-emerald-500",
-    to: "to-teal-400",
-    badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-    dot: "bg-emerald-500",
-    ring: "ring-emerald-500/20",
-  },
-  5: {
-    from: "from-rose-500",
-    to: "to-pink-500",
-    badge: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-    dot: "bg-rose-500",
-    ring: "ring-rose-500/20",
-  },
-};
-
-const FALLBACK_THEME = JALUR_THEME[1];
+const COLOR_MAP = [
+  { text: "text-blue-600", bg: "bg-blue-50", border: "border-blue-200", badge: "bg-blue-100 text-blue-700", header: "bg-blue-600" },
+  { text: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200", badge: "bg-emerald-100 text-emerald-700", header: "bg-emerald-600" },
+  { text: "text-purple-600", bg: "bg-purple-50", border: "border-purple-200", badge: "bg-purple-100 text-purple-700", header: "bg-purple-600" },
+  { text: "text-orange-600", bg: "bg-orange-50", border: "border-orange-200", badge: "bg-orange-100 text-orange-700", header: "bg-orange-600" },
+  { text: "text-pink-600", bg: "bg-pink-50", border: "border-pink-200", badge: "bg-pink-100 text-pink-700", header: "bg-pink-600" },
+];
 
 export function Dashboard() {
   const [results, setResults] = useState<JalurResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const [updateCount, setUpdateCount] = useState(0);
+  
+  // New States
   const [query, setQuery] = useState("");
+  const [isSeparate, setIsSeparate] = useState(false);
+
   const started = useRef(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/refresh", { method: "POST" });
@@ -96,224 +65,324 @@ export function Dashboard() {
       }
       setResults(json.results);
       setFetchedAt(json.fetchedAt ?? new Date().toISOString());
+      setUpdateCount((prev) => prev + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
-  // On first visit, trigger a fetch (this is the "user accesses web → refresh" flow).
+  // Initial load
   useEffect(() => {
     if (started.current) return;
     started.current = true;
     refresh();
   }, [refresh]);
 
-  const totalPendaftar = results.reduce((sum, r) => sum + r.data.length, 0);
+  // Auto refresh every 5 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refresh(true); // silent refresh
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  const maxRows = Math.max(0, ...results.map(r => r.data.length));
   const q = query.trim().toLowerCase();
 
+  // Determine which rows to show in Unified Table based on search query
+  const matchedRowIndices = Array.from({ length: maxRows })
+    .map((_, i) => i)
+    .filter(rowIndex => {
+      if (!q) return true;
+      return results.some(jalur => {
+        const person = jalur.data[rowIndex];
+        return person && (
+          (person.nama_lengkap || '').toLowerCase().includes(q) ||
+          (person.no_pendaftaran || '').toLowerCase().includes(q)
+        );
+      });
+    });
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-        <Header
-          loading={loading}
-          fetchedAt={fetchedAt}
-          totalJalur={results.length}
-          totalPendaftar={totalPendaftar}
-          onRefresh={refresh}
-        />
-
-        <div className="mt-6">
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cari nama atau no. pendaftaran…"
-            className="h-11 bg-white/70 backdrop-blur dark:bg-slate-900/60"
-          />
-        </div>
-
-        {error && (
-          <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
-            <span className="font-semibold">Terjadi kesalahan:</span> {error}
-          </div>
-        )}
-
-        <div className="mt-6 flex flex-col gap-6 pb-16">
-          {loading && results.length === 0
-            ? Array.from({ length: 5 }).map((_, i) => <JalurSkeleton key={i} />)
-            : results.map((jalur) => (
-                <JalurCard key={jalur.id} jalur={jalur} query={q} />
-              ))}
-        </div>
+    <div className="relative min-h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans pb-24">
+      {/* Web3 Modern Light Mode Background */}
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+        <div className="absolute -top-[20%] -left-[10%] w-[800px] h-[800px] bg-blue-400/20 rounded-full blur-[120px]" />
+        <div className="absolute top-[20%] -right-[10%] w-[600px] h-[600px] bg-purple-400/20 rounded-full blur-[120px]" />
+        <div className="absolute -bottom-[20%] left-[20%] w-[700px] h-[700px] bg-emerald-400/15 rounded-full blur-[100px]" />
       </div>
-    </div>
-  );
-}
 
-function Header({
-  loading,
-  fetchedAt,
-  totalJalur,
-  totalPendaftar,
-  onRefresh,
-}: {
-  loading: boolean;
-  fetchedAt: string | null;
-  totalJalur: number;
-  totalPendaftar: number;
-  onRefresh: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-4 rounded-2xl border bg-white/60 p-6 shadow-sm backdrop-blur dark:bg-slate-900/60 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-500 text-sm font-bold text-white shadow">
-            SP
-          </span>
-          <h1 className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-sky-500 bg-clip-text text-2xl font-bold tracking-tight text-transparent">
-            SPMB Jateng Dashboard
+      <div className="relative z-10 mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8 flex flex-col gap-6">
+        
+        {/* Header Title */}
+        <div className="flex items-center gap-4 mb-2">
+          <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
+            <LayoutDashboard className="w-6 h-6" />
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
+            SPMB Jateng - Hasil Pengumuman Semua Jalur
           </h1>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Perangkingan per jalur pendaftaran · Sekolah ID 235
-        </p>
-      </div>
 
-      <div className="flex items-center gap-4">
-        <div className="flex gap-4">
-          <Stat label="Jalur" value={totalJalur} />
-          <Stat label="Pendaftar" value={totalPendaftar} />
-        </div>
-        <Button
-          onClick={onRefresh}
-          disabled={loading}
-          className="h-11 bg-gradient-to-r from-violet-600 to-fuchsia-500 text-white shadow-md hover:opacity-90"
-        >
-          {loading ? (
-            <span className="flex items-center gap-2">
-              <Spinner /> Memuat…
-            </span>
-          ) : (
-            "Refresh Data"
-          )}
-        </Button>
-      </div>
+        {/* Top Info Card */}
+        <Card className="border border-slate-200 bg-white/80 backdrop-blur-xl shadow-xl shadow-slate-200/50 rounded-3xl relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-500" />
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center p-8 gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-8 w-full">
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Sekolah</p>
+                <p className="font-extrabold text-slate-800 text-lg">SMA NEGERI 1 BUKATEJA</p>
+                {fetchedAt && (
+                  <p className="text-xs text-slate-400 mt-2 font-medium">Update terakhir: {formatTime(fetchedAt)}</p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Kabupaten</p>
+                <p className="font-extrabold text-slate-800 text-lg">Purbalingga</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Jenjang</p>
+                <p className="font-extrabold text-slate-800 text-lg">SMA</p>
+              </div>
+              <div className="flex flex-col justify-between items-start md:items-end w-full">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1 md:text-right">Update ke-</p>
+                  <p className="font-extrabold text-slate-800 text-lg md:text-right">{updateCount}</p>
+                </div>
+                <button
+                  onClick={() => refresh(false)}
+                  disabled={loading}
+                  className="mt-3 px-5 py-2.5 rounded-xl bg-blue-50 text-blue-600 font-bold text-xs hover:bg-blue-600 hover:text-white transition-all shadow-sm hover:shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                  REFRESH DATA
+                </button>
+              </div>
+            </div>
+          </div>
+        </Card>
 
-      {fetchedAt && (
-        <p className="w-full text-xs text-muted-foreground sm:hidden">
-          Diperbarui {formatTime(fetchedAt)}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="text-right">
-      <div className="text-2xl font-bold tabular-nums">{value}</div>
-      <div className="text-xs uppercase tracking-wide text-muted-foreground">
-        {label}
-      </div>
-    </div>
-  );
-}
-
-function JalurCard({ jalur, query }: { jalur: JalurResult; query: string }) {
-  const theme = JALUR_THEME[jalur.id] ?? FALLBACK_THEME;
-  const rows = query
-    ? jalur.data.filter(
-        (d) =>
-          d.nama_lengkap?.toLowerCase().includes(query) ||
-          d.no_pendaftaran?.toLowerCase().includes(query)
-      )
-    : jalur.data;
-
-  return (
-    <Card
-      className={`overflow-hidden border-0 py-0 shadow-md ring-1 ${theme.ring}`}
-    >
-      <div className={`h-1.5 bg-gradient-to-r ${theme.from} ${theme.to}`} />
-      <CardHeader className="flex flex-row items-center justify-between gap-2 py-4">
-        <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 rounded-full ${theme.dot}`} />
-          <h2 className="text-lg font-semibold">{jalur.jalur}</h2>
-        </div>
-        <Badge className={`${theme.badge} border-0 font-semibold`}>
-          {rows.length}
-          {query && ` / ${jalur.data.length}`} pendaftar
-        </Badge>
-      </CardHeader>
-      <CardContent className="px-0 pb-0">
-        {jalur.data.length === 0 ? (
-          <EmptyState message="Belum ada data untuk jalur ini." />
-        ) : rows.length === 0 ? (
-          <EmptyState message="Tidak ada hasil yang cocok dengan pencarian." />
-        ) : (
-          <div className="max-h-[420px] overflow-y-auto">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-card">
-                <TableRow>
-                  <TableHead className="w-14 pl-6">#</TableHead>
-                  <TableHead>No. Pendaftaran</TableHead>
-                  <TableHead>Nama Lengkap</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row, i) => (
-                  <TableRow
-                    key={`${row.no_pendaftaran}-${i}`}
-                    className="hover:bg-muted/50"
-                  >
-                    <TableCell className="pl-6 text-muted-foreground tabular-nums">
-                      {i + 1}
-                    </TableCell>
-                    <TableCell className="font-mono text-sm tabular-nums">
-                      {row.no_pendaftaran ?? "—"}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {row.nama_lengkap ?? "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+        {error && (
+          <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-6 py-5 text-red-600 shadow-sm">
+            <ServerCrash className="h-6 w-6 shrink-0" />
+            <div className="text-sm font-medium">
+              <span className="font-bold">Error:</span> {error}
+            </div>
           </div>
         )}
-      </CardContent>
-    </Card>
-  );
-}
 
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="px-6 py-10 text-center text-sm text-muted-foreground">
-      {message}
+        {/* Top Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          {loading && results.length === 0 ? (
+             Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32 rounded-3xl bg-white border border-slate-200" />)
+          ) : (
+             results.map((jalur, index) => {
+                const colors = COLOR_MAP[index % COLOR_MAP.length];
+                return (
+                  <motion.div
+                    key={`top-summary-${jalur.id}`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    className={`bg-white border ${colors.border} rounded-3xl p-6 hover:shadow-lg transition-shadow relative overflow-hidden group`}
+                  >
+                    <div className={`absolute top-0 right-0 w-32 h-32 ${colors.bg} rounded-full blur-[40px] group-hover:scale-150 transition-transform`} />
+                    <p className={`text-sm font-extrabold ${colors.text} uppercase tracking-widest mb-3 relative z-10`}>{jalur.jalur}</p>
+                    <p className="text-5xl font-black text-slate-900 tabular-nums tracking-tighter relative z-10">{jalur.data.length}</p>
+                    <p className="text-sm text-slate-500 mt-1 font-medium relative z-10">peserta aktif</p>
+                  </motion.div>
+                );
+             })
+          )}
+        </div>
+
+        {/* Tools Row: Search & Toggle */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mt-6">
+          <div className="relative group w-full md:max-w-md">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Cari berdasarkan nama atau no. pendaftaran..."
+              className="pl-12 h-14 bg-white border-slate-200 rounded-2xl focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-slate-900 placeholder-slate-400 transition-all text-base shadow-sm"
+            />
+          </div>
+          
+          <div className="flex items-center gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm shrink-0">
+             <ListTree className="w-5 h-5 text-slate-500" />
+             <label htmlFor="separate-toggle" className="font-bold text-slate-700 cursor-pointer text-sm">
+               Bedakan Jalur
+             </label>
+             <button
+               id="separate-toggle"
+               role="switch"
+               aria-checked={isSeparate}
+               onClick={() => setIsSeparate(!isSeparate)}
+               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                 isSeparate ? "bg-blue-600" : "bg-slate-300"
+               }`}
+             >
+               <span
+                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                   isSeparate ? "translate-x-6" : "translate-x-1"
+                 }`}
+               />
+             </button>
+          </div>
+        </div>
+
+        {/* Content Section based on Toggle */}
+        {loading && results.length === 0 ? (
+          <div className="p-8 space-y-4 bg-white rounded-3xl border border-slate-200 mt-4">
+            <Skeleton className="h-12 w-full bg-slate-100 rounded-xl" />
+            <Skeleton className="h-12 w-full bg-slate-100 rounded-xl" />
+          </div>
+        ) : results.length === 0 ? (
+          <div className="p-16 text-center text-slate-500 font-medium bg-white rounded-3xl border border-slate-200 mt-4">
+            Tidak ada data pendaftar saat ini.
+          </div>
+        ) : (
+          <div className="mt-4">
+            {!isSeparate ? (
+              /* Unified Table Section */
+              <Card className="border border-slate-200 bg-white shadow-2xl shadow-slate-200/50 rounded-[2rem] overflow-hidden">
+                <CardHeader className="py-6 px-8 border-b border-slate-100 bg-white">
+                  <h2 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-3">
+                    <Trophy className="h-6 w-6 text-yellow-500" />
+                    Tabel Gabungan Semua Jalur
+                  </h2>
+                </CardHeader>
+                <CardContent className="p-0 overflow-x-auto custom-scrollbar relative">
+                  {matchedRowIndices.length === 0 ? (
+                    <div className="p-12 text-center text-slate-500 font-medium">Tidak ditemukan hasil pencarian "{query}".</div>
+                  ) : (
+                    <Table className="min-w-max border-collapse">
+                      <TableHeader>
+                        <TableRow className="bg-blue-600 hover:bg-blue-600 border-b-0">
+                          <TableHead className="text-white font-extrabold text-sm h-16 pl-8 align-middle border-r border-blue-500/50 w-24">Peringkat</TableHead>
+                          {results.map((jalur) => (
+                            <React.Fragment key={`head-${jalur.id}`}>
+                              <TableHead className="text-white font-extrabold text-sm h-16 align-middle border-r border-blue-500/50 bg-blue-700/20 px-6 min-w-[180px]">
+                                No. Pendaftaran
+                              </TableHead>
+                              <TableHead className="text-white font-extrabold text-sm h-16 align-middle px-6 min-w-[250px] border-r border-blue-500/50 last:border-r-0">
+                                Nama - Jalur {jalur.jalur}
+                              </TableHead>
+                            </React.Fragment>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody className="bg-white">
+                        {matchedRowIndices.map((rowIndex) => (
+                          <TableRow key={rowIndex} className="border-b border-slate-100 hover:bg-blue-50/30 transition-colors even:bg-slate-50/50">
+                            <TableCell className="pl-8 font-black text-slate-400 border-r border-slate-100 bg-slate-50/80 tabular-nums text-base">
+                              {rowIndex + 1}
+                            </TableCell>
+                            {results.map((jalur) => {
+                              const person = jalur.data[rowIndex];
+                              const matchesSearch = q && person && (
+                                (person.nama_lengkap || '').toLowerCase().includes(q) ||
+                                (person.no_pendaftaran || '').toLowerCase().includes(q)
+                              );
+                              
+                              return (
+                                <React.Fragment key={`cell-${jalur.id}-${rowIndex}`}>
+                                  <TableCell className={`font-mono font-medium border-r border-slate-100 px-6 tabular-nums tracking-wide transition-colors ${matchesSearch ? 'text-blue-700 bg-blue-50/50' : 'text-slate-600'}`}>
+                                    {person?.no_pendaftaran || <span className="text-slate-300">-</span>}
+                                  </TableCell>
+                                  <TableCell className={`font-bold px-6 border-r border-slate-100 last:border-r-0 capitalize text-[15px] transition-colors ${matchesSearch ? 'text-blue-700 bg-blue-50/50' : 'text-slate-800'}`}>
+                                    {person?.nama_lengkap || <span className="text-slate-300">-</span>}
+                                  </TableCell>
+                                </React.Fragment>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              /* Separated Tables Section */
+              <div className="flex flex-col gap-8">
+                {results.map((jalur, index) => {
+                  const colors = COLOR_MAP[index % COLOR_MAP.length];
+                  const filteredData = jalur.data.map((person, rankIndex) => ({ person, rankIndex })).filter(({ person }) => {
+                    if (!q) return true;
+                    return person && (
+                      (person.nama_lengkap || '').toLowerCase().includes(q) ||
+                      (person.no_pendaftaran || '').toLowerCase().includes(q)
+                    );
+                  });
+
+                  if (q && filteredData.length === 0) return null; // Hide completely empty tables when searching
+
+                  return (
+                    <motion.div
+                      key={`sep-table-${jalur.id}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                    >
+                      <Card className="border border-slate-200 bg-white shadow-xl shadow-slate-200/50 rounded-[2rem] overflow-hidden">
+                        <CardHeader className={`py-6 px-8 border-b border-slate-100 ${colors.header}`}>
+                           <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center justify-between gap-3">
+                             <div className="flex items-center gap-3">
+                               <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-black">{index + 1}</div>
+                               Jalur {jalur.jalur}
+                             </div>
+                             <div className="bg-white/20 px-3 py-1 rounded-lg text-sm">
+                               {filteredData.length} Peserta
+                             </div>
+                           </h2>
+                        </CardHeader>
+                        <CardContent className="p-0 overflow-x-auto custom-scrollbar">
+                           <Table className="min-w-max border-collapse">
+                             <TableHeader>
+                               <TableRow className="bg-slate-50 hover:bg-slate-50 border-b border-slate-200">
+                                 <TableHead className="text-slate-500 font-extrabold text-sm h-14 pl-8 align-middle border-r border-slate-200 w-24">Peringkat</TableHead>
+                                 <TableHead className="text-slate-500 font-extrabold text-sm h-14 align-middle border-r border-slate-200 px-6 min-w-[180px]">No. Pendaftaran</TableHead>
+                                 <TableHead className="text-slate-500 font-extrabold text-sm h-14 align-middle px-6 min-w-[250px]">Nama Lengkap</TableHead>
+                               </TableRow>
+                             </TableHeader>
+                             <TableBody className="bg-white">
+                               {filteredData.map(({ person, rankIndex }) => {
+                                 const matchesSearch = q && person && (
+                                  (person.nama_lengkap || '').toLowerCase().includes(q) ||
+                                  (person.no_pendaftaran || '').toLowerCase().includes(q)
+                                 );
+                                 
+                                 return (
+                                   <TableRow key={rankIndex} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
+                                     <TableCell className="pl-8 font-black text-slate-400 border-r border-slate-100 bg-slate-50/30 tabular-nums text-base">
+                                       {rankIndex + 1}
+                                     </TableCell>
+                                     <TableCell className={`font-mono font-medium border-r border-slate-100 px-6 tabular-nums tracking-wide transition-colors ${matchesSearch ? `${colors.text} ${colors.bg}` : 'text-slate-600'}`}>
+                                       {person?.no_pendaftaran || "-"}
+                                     </TableCell>
+                                     <TableCell className={`font-bold px-6 capitalize text-[15px] transition-colors ${matchesSearch ? `${colors.text} ${colors.bg}` : 'text-slate-800'}`}>
+                                       {person?.nama_lengkap || "-"}
+                                     </TableCell>
+                                   </TableRow>
+                                 )
+                               })}
+                             </TableBody>
+                           </Table>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
     </div>
-  );
-}
-
-function JalurSkeleton() {
-  return (
-    <Card className="overflow-hidden border-0 py-0 shadow-md">
-      <Skeleton className="h-1.5 w-full rounded-none" />
-      <CardHeader className="flex flex-row items-center justify-between py-4">
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="h-6 w-24 rounded-full" />
-      </CardHeader>
-      <CardContent className="space-y-3 px-6 pb-6">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-9 w-full" />
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function Spinner() {
-  return (
-    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
   );
 }
 
