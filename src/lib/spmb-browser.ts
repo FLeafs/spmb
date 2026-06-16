@@ -98,11 +98,58 @@ export async function ensureBrowser(): Promise<void> {
 async function startBrowser(s: Singleton): Promise<void> {
   const isWindows = process.platform === "win32";
   const runHeadless = process.env.SPMB_HEADLESS === "1";
-  const chromePath =
-    process.env.CHROME_PATH ||
-    (isWindows
-      ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-      : undefined);
+  let chromePath = process.env.CHROME_PATH;
+
+  if (!chromePath) {
+    if (isWindows) {
+      chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+    } else {
+      const linuxPaths = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+      ];
+      for (const p of linuxPaths) {
+        if (fs.existsSync(p)) {
+          chromePath = p;
+          break;
+        }
+      }
+
+      if (!chromePath) {
+        log("Chrome not found on Linux. Attempting auto-setup...");
+        try {
+          const { execSync } = require("child_process");
+          execSync("npx @puppeteer/browsers install chrome@stable", { stdio: "inherit" });
+          
+          const chromeInstallDir = path.join(process.cwd(), "chrome");
+          const findChrome = (dir: string): string | null => {
+            if (!fs.existsSync(dir)) return null;
+            for (const file of fs.readdirSync(dir)) {
+              const fullPath = path.join(dir, file);
+              if (fs.statSync(fullPath).isDirectory()) {
+                const res = findChrome(fullPath);
+                if (res) return res;
+              } else if (file === "chrome") {
+                // Ensure it is executable
+                try { fs.chmodSync(fullPath, 0o755); } catch {}
+                return fullPath;
+              }
+            }
+            return null;
+          };
+          chromePath = findChrome(chromeInstallDir) || undefined;
+          if (chromePath) {
+             log(`Auto-setup successful! Chrome found at: ${chromePath}`);
+          }
+        } catch (e) {
+          log("Auto-setup failed:", e);
+        }
+      }
+    }
+  }
 
   // Clean up any old leftover chrome-profile folders in the current directory on startup
   try {
